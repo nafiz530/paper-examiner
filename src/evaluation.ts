@@ -169,25 +169,29 @@ async function partsForItems(items: PaperItem[]): Promise<Array<{ text?: string;
   return out
 }
 
-type OpenAIContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }
-type GeminiContentPart = { text: string } | { inlineData: { mimeType: string; data: string } }
+type OpenAIContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+type GeminiContentPart =
+  | { text: string }
+  | { inlineData: { mimeType: string; data: string } }
 
 function openAIContent(parts: Array<{ text?: string; image?: string; mimeType?: string }>, intro: string): OpenAIContentPart[] {
-  return [
-    { type: 'text', text: intro },
-    ...parts.flatMap(part => part.text
-      ? [{ type: 'text', text: part.text }]
-      : [{ type: 'image_url', image_url: { url: part.image } }]),
-  ]
+  const content: OpenAIContentPart[] = [{ type: 'text', text: intro }]
+  for (const part of parts) {
+    if (part.text !== undefined) content.push({ type: 'text', text: part.text })
+    else if (part.image) content.push({ type: 'image_url', image_url: { url: part.image } })
+  }
+  return content
 }
 
 function geminiContents(parts: Array<{ text?: string; image?: string; mimeType?: string }>, intro: string): Array<{ role: 'user'; parts: GeminiContentPart[] }> {
-  return [{ role: 'user', parts: [
-    { text: intro },
-    ...parts.flatMap(part => part.text
-      ? [{ text: part.text }]
-      : [{ inlineData: { mimeType: part.mimeType || 'image/jpeg', data: part.image!.split(',')[1] } }]),
-  ] }]
+  const content: GeminiContentPart[] = [{ text: intro }]
+  for (const part of parts) {
+    if (part.text !== undefined) content.push({ text: part.text })
+    else if (part.image) content.push({ inlineData: { mimeType: part.mimeType || 'image/jpeg', data: part.image.split(',')[1] || part.image } })
+  }
+  return [{ role: 'user', parts: content }]
 }
 
 async function parseResponse(response: Response): Promise<string> {
