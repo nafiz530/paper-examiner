@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+Disallow: /app
+Sitemap: https://paper-examiner.pages.dev/sitemap.xml
