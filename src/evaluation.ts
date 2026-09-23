@@ -169,7 +169,10 @@ async function partsForItems(items: PaperItem[]): Promise<Array<{ text?: string;
   return out
 }
 
-function openAIContent(parts: Array<{ text?: string; image?: string; mimeType?: string }>, intro: string) {
+type OpenAIContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }
+type GeminiContentPart = { text: string } | { inlineData: { mimeType: string; data: string } }
+
+function openAIContent(parts: Array<{ text?: string; image?: string; mimeType?: string }>, intro: string): OpenAIContentPart[] {
   return [
     { type: 'text', text: intro },
     ...parts.flatMap(part => part.text
@@ -178,12 +181,12 @@ function openAIContent(parts: Array<{ text?: string; image?: string; mimeType?: 
   ]
 }
 
-function geminiContents(parts: Array<{ text?: string; image?: string; mimeType?: string }>, intro: string) {
+function geminiContents(parts: Array<{ text?: string; image?: string; mimeType?: string }>, intro: string): Array<{ role: 'user'; parts: GeminiContentPart[] }> {
   return [{ role: 'user', parts: [
     { text: intro },
     ...parts.flatMap(part => part.text
       ? [{ text: part.text }]
-      : [{ inlineData: { mimeType: part.mimeType, data: part.image!.split(',')[1] } }]),
+      : [{ inlineData: { mimeType: part.mimeType || 'image/jpeg', data: part.image!.split(',')[1] } }]),
   ] }]
 }
 
