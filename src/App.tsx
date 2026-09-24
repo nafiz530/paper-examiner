@@ -1,76 +1,48 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpRight, Check, FileImage, FileText, ImagePlus, Layers3, LockKeyhole, Settings2, Sparkles, Trash2, Upload, X, BrainCircuit, CircleCheck, AlertTriangle, RotateCcw } from 'lucide-react'
-import { deleteExam, itemToPreviewUrl, saveExam, type ExamRecord, type PaperItem, type PaperSide, getExam } from './db'
-import { clearAIConfig, loadAIConfig, PROVIDERS, saveAIConfig, testAIConnection, type AIConfig, type AIProvider } from './ai'
-import { runEvaluationPipeline, type EvaluationResult, type PipelineStage } from './evaluation'
+import { useState } from 'react'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { AnimatePresence } from 'framer-motion'
+import { I18nProvider, useI18n } from './i18n'
+import { SettingsProvider } from './lib/SettingsContext'
+import { TopBar } from './components/TopBar'
+import { SettingsModal } from './components/SettingsModal'
+import { HomePage } from './pages/HomePage'
+import { ExaminePage } from './pages/ExaminePage'
+import { ReportPage } from './pages/ReportPage'
+import { AboutPage, DocsPage, PrivacyPage } from './pages/InfoPages'
 
-type Page = 'app' | 'docs' | 'about' | 'privacy'
-
-type Copy = { [key:string]: string }
-const EN: Copy = { docs:'Docs', about:'About', privacy:'Privacy', english:'English', bangla:'বাংলা', back:'Back to examiner', docsTitle:'Paper Examiner Docs', docsIntro:'Everything you need to understand the private, local-first AI paper evaluation workflow.', how:'How it works', howText:'Add the complete question paper and your complete solution. Paper Examiner reconstructs the material, runs independent reviewer agents, then sends their structured evidence to a Main Agent for adjudication. The final report is generated from that adjudication.', privacyTitle:'Privacy', privacyText:'Paper Examiner is designed to keep paper data in your browser. Your API key is saved locally. When an examination runs, the selected AI provider receives the material required for the request. Paper Examiner does not need its own application backend.', byok:'BYOK', byokText:'Bring your own API key. Choose a provider and enter its exact model ID in Settings. Your configuration remains local until site data is cleared.', inputs:'Supported input', inputsText:'Question Paper and Your Solution can each contain text, multiple photos, or mixed content in any order.', limits:'Important limitation', limitsText:'AI marking is automated assessment, not an official examiner result. Check question-level evidence when handwriting, image quality, ambiguous wording, or marking schemes are unclear.', aboutTitle:'About Paper Examiner', aboutText:'Paper Examiner is a personal, local-first AI workspace built to help you examine your own papers, understand mistakes, and learn from the evidence.', mission:'Purpose', missionText:'Self-Teaching is the best Teaching!!! Paper Examiner turns a complete paper and solution into a structured review instead of requiring manual question-by-question preparation.', privacyPage:'Privacy & data', privacyPageText:'Local paper data and saved AI configuration are intended to stay in this browser. Clearing site data removes locally saved data. Your selected AI provider may process submitted paper material according to its own terms and privacy policy.', data:'Data flow', dataText:'Browser → selected AI provider. There is no Paper Examiner evaluation server in the pipeline.', nav:'Navigation' }
-const BN: Copy = { docs:'ডকস', about:'পরিচিতি', privacy:'প্রাইভেসি', english:'English', bangla:'বাংলা', back:'Examiner-এ ফিরে যান', docsTitle:'Paper Examiner ডকস', docsIntro:'Private, local-first AI paper evaluation workflow সম্পর্কে প্রয়োজনীয় তথ্য।', how:'কীভাবে কাজ করে', howText:'সম্পূর্ণ প্রশ্নপত্র ও সম্পূর্ণ সমাধান দিন। Paper Examiner প্রথমে material reconstruct করে, এরপর একাধিক independent reviewer agent আলাদাভাবে মূল্যায়ন করে। শেষে Main Agent তাদের structured evidence বিচার করে final adjudication তৈরি করে।', privacyTitle:'Privacy', privacyText:'Paper Examiner এমনভাবে তৈরি যে paper data আপনার browser-এই থাকে। API key-ও locally save হয়। Examination চালালে প্রয়োজনীয় material আপনার নির্বাচিত AI provider-এর কাছে যায়। Paper Examiner-এর নিজস্ব application backend প্রয়োজন হয় না।', byok:'BYOK', byokText:'নিজের API key ব্যবহার করুন। Settings থেকে provider ও exact model ID দিন। Site data clear না করা পর্যন্ত configuration locally থাকে।', inputs:'Supported input', inputsText:'Question Paper ও Your Solution—দুটিতেই text, একাধিক photo বা mixed content যেকোনো order-এ রাখা যায়।', limits:'গুরুত্বপূর্ণ সীমাবদ্ধতা', limitsText:'AI marking একটি automated assessment, official examiner result নয়। Handwriting, image quality, ambiguous wording বা marking scheme অস্পষ্ট হলে question-level evidence যাচাই করুন।', aboutTitle:'Paper Examiner সম্পর্কে', aboutText:'Paper Examiner একটি personal, local-first AI workspace—নিজের paper পরীক্ষা, ভুল বোঝা এবং evidence থেকে শেখার জন্য তৈরি।', mission:'উদ্দেশ্য', missionText:'Self-Teaching is the best Teaching!!! সম্পূর্ণ paper ও solution-কে structured review-এ রূপান্তর করা, যাতে প্রতিটি প্রশ্ন manually সাজানোর প্রয়োজন না হয়।', privacyPage:'Privacy & data', privacyPageText:'Local paper data ও saved AI configuration এই browser-এ থাকার জন্য তৈরি। Site data clear করলে locally saved data মুছে যায়। আপনার নির্বাচিত AI provider তাদের নিজস্ব terms ও privacy policy অনুযায়ী submitted paper material process করতে পারে।', data:'Data flow', dataText:'Browser → নির্বাচিত AI provider। Paper Examiner-এর কোনো evaluation server এই pipeline-এ নেই।', nav:'Navigation' }
-
-function Workspace({title,description,side,items,onChange}:{title:string;description:string;side:PaperSide;items:PaperItem[];onChange:(items:PaperItem[])=>void}){
- const inputRef=useRef<HTMLInputElement>(null);const [dragging,setDragging]=useState(false)
- const addImages=(files:FileList|null)=>{if(!files)return;const next:Array<PaperItem>=Array.from(files).filter(f=>f.type.startsWith('image/')).map(f=>({id:crypto.randomUUID(),type:'image',blob:f,name:f.name,mimeType:f.type,size:f.size,createdAt:Date.now()}));onChange([...items,...next]);if(inputRef.current)inputRef.current.value=''}
- const addText=()=>{const text=window.prompt(side==='questions'?'Paste or type part of the question paper:':'Paste or type part of your solution:');if(text?.trim())onChange([...items,{id:crypto.randomUUID(),type:'text',text:text.trim(),createdAt:Date.now()}])}
- const move=(i:number,d:-1|1)=>{const n=[...items],j=i+d;if(j<0||j>=n.length)return;[n[i],n[j]]=[n[j],n[i]];onChange(n)}
- return <section className={'workspace '+(dragging?'workspace--dragging':'')} onDragOver={e=>{e.preventDefault();setDragging(true)}} onDragLeave={()=>setDragging(false)} onDrop={e=>{e.preventDefault();setDragging(false);addImages(e.dataTransfer.files)}}>
-  <div className="workspace__head"><div><div className="eyebrow">Workspace</div><h2>{title}</h2><p>{description}</p></div><span className="count-pill">{items.length} {items.length===1?'item':'items'}</span></div>
-  <div className="dropzone"><div className="dropzone__icon"><Upload size={20}/></div><div className="dropzone__copy"><strong>Drop anything here</strong><span>Images, text, or a mixture of both.</span></div><div className="dropzone__actions"><button className="button" onClick={()=>inputRef.current?.click()}><ImagePlus size={16}/> Add photos</button><button className="button" onClick={addText}><FileText size={16}/> Add text</button></div><input ref={inputRef} hidden type="file" accept="image/*" multiple onChange={e=>addImages(e.target.files)}/></div>
-  {items.length>0&&<div className="item-grid">{items.map((item,i)=>{const url=itemToPreviewUrl(item);return <article className={'paper-item paper-item--'+item.type} key={item.id}><div className="item-tools"><button disabled={i===0} aria-label="Move earlier" onClick={()=>move(i,-1)}>↑</button><button disabled={i===items.length-1} aria-label="Move later" onClick={()=>move(i,1)}>↓</button><button aria-label="Remove item" onClick={()=>{onChange(items.filter(x=>x.id!==item.id))}}>×</button></div>{item.type==='image'?<><img src={url} alt={item.name}/><div className="item-meta"><FileImage size={14}/><span title={item.name}>{item.name}</span></div></>:<><div className="text-item__mark">T</div><p>{item.text}</p><div className="item-meta"><FileText size={14}/><span>Text block</span></div></>}</article>})}</div>}
- </section>
+function Shell() {
+  const { t } = useI18n()
+  const [showSettings, setShowSettings] = useState(false)
+  return (
+    <div className="app-shell">
+      <TopBar onOpenSettings={() => setShowSettings(true)} />
+      <Routes>
+        <Route path="/" element={<HomePage onOpenSettings={() => setShowSettings(true)} />} />
+        <Route path="/examine/:id" element={<ExaminePage />} />
+        <Route path="/report/:id" element={<ReportPage />} />
+        <Route path="/docs" element={<DocsPage />} />
+        <Route path="/about" element={<AboutPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      <footer className="site-footer">
+        <span>{t('footer.tagline')}</span>
+      </footer>
+      <AnimatePresence>
+        {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      </AnimatePresence>
+    </div>
+  )
 }
 
-function SettingsModal({onClose}:{onClose:()=>void}){
- const [config,setConfig]=useState<AIConfig>(loadAIConfig);const [showKey,setShowKey]=useState(false);const [testing,setTesting]=useState(false);const [message,setMessage]=useState('');const [error,setError]=useState('')
- const update=(patch:Partial<AIConfig>)=>{setConfig(x=>({...x,...patch}));setMessage('');setError('')}
- const save=()=>{saveAIConfig(config);setMessage('Saved in this browser.')}
- const test=async()=>{setTesting(true);setMessage('');setError('');try{saveAIConfig(config);await testAIConnection(config);setMessage('Connection verified — this model is reachable from your browser.')}catch(e){setError(e instanceof Error?e.message:'Connection test failed.')}finally{setTesting(false)}}
- const clear=()=>{clearAIConfig();setConfig({provider:'gemini',apiKey:'',model:''});setMessage('Saved model configuration cleared.')}
- return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal modal--settings" onMouseDown={e=>e.stopPropagation()}><div className="modal__head"><div><div className="eyebrow">Phase 2 · BYOK</div><h3>Examiner settings</h3></div><button className="icon-button" onClick={onClose}><X size={18}/></button></div><p className="settings-intro">Choose the provider, paste your own API key, and enter the exact full model ID. The browser calls the provider directly.</p><div className="field"><label>Provider</label><select value={config.provider} onChange={e=>update({provider:e.target.value as AIProvider})}>{Object.entries(PROVIDERS).map(([id,p])=><option key={id} value={id}>{p.label}</option>)}</select></div><div className="field"><label>Exact full model ID</label><input value={config.model} onChange={e=>update({model:e.target.value})} placeholder={PROVIDERS[config.provider].placeholder} spellCheck={false}/><small>Use the provider's exact model identifier.</small></div><div className="field"><label>API key</label><div className="key-input"><input type={showKey?'text':'password'} value={config.apiKey} onChange={e=>update({apiKey:e.target.value})} placeholder="Paste your key" autoComplete="off"/><button type="button" onClick={()=>setShowKey(x=>!x)}>{showKey?'Hide':'Show'}</button></div></div><div className="settings-actions"><button className="button" onClick={save}>Save locally</button><button className="button button--primary" onClick={test} disabled={testing}>{testing?'Testing…':'Test connection'}</button></div>{message&&<div className="notice notice--ok"><Check size={15}/>{message}</div>}{error&&<div className="notice notice--error">{error}</div>}<div className="setup-preview setup-preview--compact"><div><Check size={16}/><span>Configuration stays in this browser</span></div><div><Check size={16}/><span>No Paper Examiner backend receives your key</span></div><div><LockKeyhole size={16}/><span>Clearing site data removes the saved configuration</span></div></div><div className="modal__foot"><button className="danger-link" onClick={clear}>Clear saved AI configuration</button><button className="button" onClick={onClose}>Done</button></div></div></div>
-}
-
-function PipelineModal({stage,detail,onClose}:{stage:PipelineStage;detail:string;onClose:()=>void}){
- const steps:[PipelineStage,string][]=[['reconstructing','Reconstruct paper'],['reviewing','Independent sub-agents'],['adjudicating','Main Agent adjudication'],['reporting','Build final report']]
- const current=steps.findIndex(x=>x[0]===stage)
- return <div className="modal-backdrop"><div className="modal modal--pipeline"><div className="pipeline-orb"><BrainCircuit size={28}/></div><div className="eyebrow">Phase 3 · AI evaluation pipeline</div><h3>Examiner is working</h3><p className="pipeline-detail">{detail}</p><div className="pipeline-steps">{steps.map(([id,label],i)=><div className={'pipeline-step '+(i<current?'done ':'')+(id===stage?'active':'')} key={id}><span>{i<current?<Check size={14}/>:i+1}</span><strong>{label}</strong></div>)}</div><div className="pipeline-rule">Independent reviewers never see each other's scores. The Main Agent adjudicates their evidence.</div></div></div>
-}
-
-function Report({result,onReset}:{result:EvaluationResult;onReset:()=>void}){
- const a=result.adjudication
- const pct=Math.max(0,Math.min(100,a.percentage))
- return <section className="report">
-  <div className="report-head"><div><div className="eyebrow"><CircleCheck size={14}/> Final adjudication</div><h2>{a.obtainedMarks}<span> / {a.totalMarks}</span></h2><p>{pct}% · {a.confidence}% adjudication confidence</p></div><button className="button" onClick={onReset}><RotateCcw size={15}/> Run again</button></div>
-  <div className="score-bar"><i style={{width:pct+'%'}}/></div>
-  <div className="report-summary">{a.summary}</div>
-  <div className="report-grid"><div className="report-card"><h3>Strong points</h3>{a.strongPoints.length?<ul>{a.strongPoints.map(x=><li key={x}><CircleCheck size={14}/>{x}</li>)}</ul>:<p>No specific strengths were recorded.</p>}</div><div className="report-card"><h3>Weak points</h3>{a.weakPoints.length?<ul>{a.weakPoints.map(x=><li key={x}><AlertTriangle size={14}/>{x}</li>)}</ul>:<p>No specific weak points were recorded.</p>}</div></div>
-  <div className="report-card"><div className="report-card__head"><h3>Question-by-question</h3><span>{a.questionResults.length} assessed</span></div><div className="result-table">{a.questionResults.map(q=><div className="result-row" key={q.questionNumber}><div><strong>{q.questionNumber}</strong><span>{q.verdict.replace('_',' ')}</span></div><b>{q.awardedMarks}{q.maxMarks!=null?' / '+q.maxMarks:''}</b><p>{q.explanation}</p></div>)}</div></div>
-  <div className="report-card"><h3>Actionable advice</h3><ul>{a.actionableAdvice.map(x=><li key={x}><ArrowUpRight size={14}/>{x}</li>)}</ul>{a.reviewerDisagreements.length>0&&<><h3 className="subhead">Resolved reviewer disagreements</h3><ul>{a.reviewerDisagreements.map(x=><li key={x}><AlertTriangle size={14}/>{x}</li>)}</ul></>}</div>
-  <details className="report-card report-details"><summary>View independent reviewer reports</summary>{result.reviews.map(r=><div className="reviewer-block" key={r.reviewerId}><div><strong>{r.reviewerId}</strong><span>{r.proposedTotalMarks} marks · {r.confidence}% confidence</span></div><p>{r.summary}</p></div>)}</details>
- </section>
-}
-
-function InfoPage({page,lang,onNavigate}:{page:Page;lang:'en'|'bn';onNavigate:(p:Page)=>void}){ const t=lang==='bn'?BN:EN; const content=page==='docs'?[[t.how,t.howText],[t.byok,t.byokText],[t.inputs,t.inputsText],[t.limits,t.limitsText]]:page==='about'?[[t.mission,t.missionText]]:[[t.privacyTitle,t.privacyPageText],[t.data,t.dataText]]; const title=page==='docs'?t.docsTitle:page==='about'?t.aboutTitle:t.privacyPage; return <main className="info-page"><div className="info-nav"><button className="text-button" onClick={()=>onNavigate('app')}><Layers3 size={16}/> {t.back}</button><div><button className="text-button" onClick={()=>{localStorage.setItem('paper-examiner-lang',lang==='en'?'bn':'en');location.reload()}}>{lang==='en'?t.bangla:t.english}</button></div></div><header className="info-hero"><div className="eyebrow">Paper Examiner</div><h1>{title}</h1><p>{page==='docs'?t.docsIntro:t.aboutText}</p></header><div className="info-sections">{content.map(([h,b])=><section className="info-section" key={h}><h2>{h}</h2><p>{b}</p></section>)}</div><footer className="info-footer"><button onClick={()=>onNavigate('docs')}>{t.docs}</button><button onClick={()=>onNavigate('about')}>{t.about}</button><button onClick={()=>onNavigate('privacy')}>{t.privacy}</button></footer></main> }
-
-export default function App(){
- const [lang]=useState<'en'|'bn'>(()=>localStorage.getItem('paper-examiner-lang')==='bn'?'bn':'en'); const [page,setPage]=useState<Page>('app')
- const [exam,setExam]=useState<ExamRecord>({id:crypto.randomUUID(),title:'',subject:'',totalMarks:null,createdAt:Date.now(),updatedAt:Date.now(),questions:[],answers:[]})
- const [loaded,setLoaded]=useState(false);const [showSettings,setShowSettings]=useState(false);const [saved,setSaved]=useState(false);const [running,setRunning]=useState(false);const [pipeline,setPipeline]=useState<{stage:PipelineStage;detail:string}|null>(null);const [error,setError]=useState('');const [report,setReport]=useState<EvaluationResult|undefined>()
- useEffect(()=>{const raw=localStorage.getItem('paper-examiner-current');if(!raw){setLoaded(true);return}try{const id=JSON.parse(raw).id;getExam(id).then(x=>x&&setExam(x)).finally(()=>setLoaded(true))}catch{setLoaded(true)}},[])
- useEffect(()=>{if(!loaded)return;const t=setTimeout(()=>{saveExam({...exam,updatedAt:Date.now()}).then(()=>{localStorage.setItem('paper-examiner-current',JSON.stringify({id:exam.id}));setSaved(true);setTimeout(()=>setSaved(false),900)}).catch(()=>{})},400);return()=>clearTimeout(t)},[exam,loaded])
- useEffect(()=>{if(exam.evaluation)setReport(exam.evaluation)},[exam.evaluation])
- const ready=exam.questions.length>0&&exam.answers.length>0;const images=useMemo(()=>[...exam.questions,...exam.answers].filter(x=>x.type==='image').length,[exam])
- const update=(side:PaperSide,v:PaperItem[])=>setExam(e=>({...e,[side]:v,evaluation:undefined,updatedAt:Date.now()}))
- const reset=async()=>{if(!confirm('Delete this evaluation and all of its local paper data?'))return;await deleteExam(exam.id);localStorage.removeItem('paper-examiner-current');location.reload()}
- const run=async()=>{setError('');const config=loadAIConfig();if(!config.apiKey||!config.model){setShowSettings(true);return}setRunning(true);setReport(undefined);try{const result=await runEvaluationPipeline(config,exam,(stage,detail)=>setPipeline({stage,detail}));setExam(e=>({...e,evaluation:result,updatedAt:Date.now()}));setReport(result);setPipeline(null)}catch(e){setPipeline(null);setError(e instanceof Error?e.message:'Evaluation failed.');}finally{setRunning(false)}}
- if(page!=='app') return <InfoPage page={page} lang={lang} onNavigate={setPage}/>
- return <main className="app-shell"><nav className="topbar"><div className="brand"><div className="brand__mark"><Layers3 size={18}/></div><span>Paper Examiner</span></div><div className="topbar__right"><button className="text-button" onClick={()=>setPage('docs')}>{lang==='bn'?'ডকস':'Docs'}</button><button className="text-button" onClick={()=>setPage('about')}>{lang==='bn'?'পরিচিতি':'About'}</button><button className="text-button" onClick={()=>setPage('privacy')}>{lang==='bn'?'প্রাইভেসি':'Privacy'}</button><button className="text-button" onClick={()=>{localStorage.setItem('paper-examiner-lang',lang==='en'?'bn':'en');location.reload()}}>{lang==='en'?'বাংলা':'English'}</button><span className="privacy"><LockKeyhole size={14}/> {saved?'Saved locally':'Local-first'}</span><button className="icon-button" aria-label="Settings" onClick={()=>setShowSettings(true)}><Settings2 size={18}/></button></div></nav>
- <div className="content">{report?<Report result={report} onReset={()=>{setReport(undefined);setExam(e=>({...e,evaluation:undefined,updatedAt:Date.now()}))}}/>:<><header className="hero"><div className="hero__copy"><div className="eyebrow"><Sparkles size={14}/> Private AI evaluation workspace</div><h1>Put in the paper.<br/><em>Get the verdict.</em></h1><p>Drop the original questions and your solved work. Organize nothing manually — Paper Examiner reconstructs, reviews, adjudicates, and reports.</p></div><div className="hero__status"><div className="status-card"><span>Evaluation readiness</span><strong>{ready?'Ready to review':'Add both papers'}</strong><div className="status-line"><i className={ready?'is-ready':''}/></div><small>{exam.questions.length} question-side items · {exam.answers.length} solution-side items</small></div></div></header>
- <section className="exam-meta"><div><label>Paper name</label><input value={exam.title} onChange={e=>setExam(x=>({...x,title:e.target.value,evaluation:undefined,updatedAt:Date.now()}))} placeholder="e.g. Physics Chapter Test"/></div><div><label>Subject <span>optional</span></label><input value={exam.subject} onChange={e=>setExam(x=>({...x,subject:e.target.value,evaluation:undefined,updatedAt:Date.now()}))} placeholder="e.g. Physics"/></div><div><label>Total marks <span>optional</span></label><input type="number" min="0" value={exam.totalMarks??''} onChange={e=>setExam(x=>({...x,totalMarks:e.target.value===''?null:Number(e.target.value),evaluation:undefined,updatedAt:Date.now()}))} placeholder="50"/></div></section>
- <div className="workspace-stack"><Workspace title="Question Paper" description="Add the complete original paper in any order — photos, text, or both." side="questions" items={exam.questions} onChange={v=>update('questions',v)}/><div className="flow-divider"><span>then</span><ArrowUpRight size={16}/></div><Workspace title="Your Solution" description="Drop your complete submitted work. Don't split it into questions manually." side="answers" items={exam.answers} onChange={v=>update('answers',v)}/></div>
- <section className="launch-card"><div><div className="eyebrow">Phase 3 · AI Evaluation</div><h3>{ready?'Ready to run the full examiner pipeline.':'Start by adding both sides.'}</h3><p>{images} image{images===1?'':'s'} stored locally · {saved?'Autosaved just now.':'Changes autosave locally.'}</p></div><button className="button button--primary" disabled={!ready||running} onClick={run}><BrainCircuit size={17}/>{running?'Examining…':'Run AI examination'} <ArrowUpRight size={17}/></button></section>{error&&<div className="notice notice--error">{error}</div>}<button className="danger-link" onClick={reset}><Trash2 size={14}/> Delete local evaluation</button></>}</div>
- {showSettings&&<SettingsModal onClose={()=>setShowSettings(false)}/>}
- {pipeline&&<PipelineModal stage={pipeline.stage} detail={pipeline.detail} onClose={()=>{}}/>}
- </main>
+export default function App() {
+  return (
+    <I18nProvider>
+      <SettingsProvider>
+        <BrowserRouter>
+          <Shell />
+        </BrowserRouter>
+      </SettingsProvider>
+    </I18nProvider>
+  )
 }
