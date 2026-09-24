@@ -12,7 +12,16 @@
  * settings.ts at call time (keys rotate), so the client is created per call —
  * do NOT use process.env/dotenv here (that is Node-only).
  */
-import { GoogleGenAI, type GenerateContentResponse, type GenerateContentConfig, type SafetySetting, type Schema } from '@google/genai'
+import {
+  FinishReason,
+  GoogleGenAI,
+  HarmBlockThreshold,
+  HarmCategory,
+  type GenerateContentResponse,
+  type GenerateContentConfig,
+  type SafetySetting,
+  type Schema,
+} from '@google/genai'
 import { AIError, classifyStatus, timeoutError, networkError } from './aiErrors'
 
 export const DEFAULT_GEMINI_TIMEOUT_MS = 90_000
@@ -39,11 +48,11 @@ export function supportsLegacySampling(model: string): boolean {
  * BLOCK_ONLY_HIGH keeps obvious abuse blocked while letting exam content through.
  */
 export const GEMINI_SAFETY_SETTINGS: SafetySetting[] = [
-  'HARM_CATEGORY_HARASSMENT',
-  'HARM_CATEGORY_HATE_SPEECH',
-  'HARM_CATEGORY_SEXUALLY_EXPLICIT',
-  'HARM_CATEGORY_DANGEROUS_CONTENT',
-].map((category) => ({ category: category as SafetySetting['category'], threshold: 'BLOCK_ONLY_HIGH' as const }))
+  HarmCategory.HARM_CATEGORY_HARASSMENT,
+  HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+  HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+  HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+].map((category) => ({ category, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH }))
 
 /**
  * Map any SDK failure onto the unified AIError taxonomy so the key pool,
@@ -91,7 +100,11 @@ export function readGeminiResponse(response: GenerateContentResponse): string {
   const finishReason = candidate?.finishReason
   const text = (candidate?.content?.parts ?? []).map((p) => p.text || '').join('')
   if (text.trim()) {
-    if (finishReason && finishReason !== 'STOP' && finishReason !== 'FINISH_REASON_UNSPECIFIED') {
+    if (
+      finishReason &&
+      finishReason !== FinishReason.STOP &&
+      finishReason !== FinishReason.FINISH_REASON_UNSPECIFIED
+    ) {
       // Truncated JSON is poison — let the retry machinery re-run with more headroom.
       throw new AIError('UNREADABLE', 'errors.unreadable', {
         detail: `Output truncated by Gemini (${finishReason}) — retrying with more token headroom.`,
