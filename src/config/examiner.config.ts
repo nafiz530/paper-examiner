@@ -79,8 +79,8 @@ export const ADMIN_PROVIDERS: AdminProvider[] = [
     id: 'gemini-free',
     type: 'gemini',
     label: 'Google Gemini (Free)',
-    keys: ['PASTE_YOUR_GEMINI_API_KEY_1', 'PASTE_YOUR_GEMINI_API_KEY_2'],
-    models: ['gemini-2.5-flash', 'gemini-2.0-flash'],
+    keys: ['AIzaSyBpN5iIE5SvxUDXPFKL0KUEW9bfPKApsYk', 'PASTE_YOUR_GEMINI_API_KEY_2'],
+    models: ['gemini-3.5-flash-lite'],
     enabled: true,
   },
   {
