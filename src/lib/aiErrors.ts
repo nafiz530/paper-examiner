@@ -36,6 +36,7 @@ export type ErrorI18nKey =
   | 'errors.unreadable'
   | 'errors.unknown'
   | 'errors.noModels'
+  | 'errors.noQuestions'
 
 export class AIError extends Error {
   code: AIErrorCode

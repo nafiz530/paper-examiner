@@ -26,3 +26,20 @@ export const ADMIN_SETTINGS = {
   /** max models a user may select at once in Agent mode */
   maxAgentModels: 3,
 }
+
+/**
+ * The v0.3 examiner harness (see ROADMAP.md §2.3).
+ * Every AI call has ONE job; all aggregation is deterministic TypeScript.
+ */
+export const HARNESS = {
+  /** single-mode: questions per focused grading call */
+  gradeBatchSize: 4,
+  /** agent mode: questions per reviewer call */
+  agentReviewBatchSize: 6,
+  /** disputed questions per adjudication call */
+  adjudicateBatchSize: 10,
+  /** reviewer mark spread tolerated before a question goes to adjudication (fraction of maxMarks) */
+  disputeTolerance: 0.15,
+  /** stagger between parallel calls, to be gentle on provider rate limits */
+  staggerMs: 250,
+} as const

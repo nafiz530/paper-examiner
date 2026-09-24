@@ -53,7 +53,16 @@ export function ExaminePage() {
       <AnimatePresence>
         {error
           ? <PipelineOverlay stage="finishing" models={[]} error={error} onRetry={retry} onHome={() => navigate('/')} />
-          : <PipelineOverlay stage={progress?.stage ?? 'preparing'} detail={progress?.detail} models={progress?.models ?? []} onHome={() => navigate('/')} />}
+          : <PipelineOverlay
+              stage={progress?.stage ?? 'preparing'}
+              detail={progress?.detail}
+              models={progress?.models ?? []}
+              questionResults={progress?.questionResults}
+              tokens={progress?.tokens}
+              counts={progress?.counts}
+              mode={settings.selection.mode}
+              onHome={() => navigate('/')}
+            />}
       </AnimatePresence>
     </div>
   )

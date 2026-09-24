@@ -1,48 +1,53 @@
-# Paper Examiner v0.2.0 — AI Exam Examiner
+# Paper Examiner v0.3.0 — AI Exam Examiner
 
-Upload a question paper + the student's answer sheet (photos or scans) and get an
+Upload a question paper + the student's answer sheet (photos or text) and get an
 AI-examined mark breakdown: per-question scores, strong points, weak points,
 suggestions and recommendations — in any subject, any country, any language.
 Works entirely in the browser. No backend, no server to run.
 
-## What's new in v0.2.0 (full rebuild)
+## What's new in v0.3.0 — the Examiner Harness overhaul
 
-- **Fixed: API keys could not be added.** Config is now validated on load, keys are
-  added with a proper form + "Test" button, model IDs are picked from dropdowns
-  (never typed blind), and every save gives visible feedback.
-- **Fixed: examination failing.** Images are compressed before upload (≈1600px JPEG)
-  and archived as heavy WebP (~100KB) after grading; every AI call has a 120s timeout,
-  status-aware retry with exponential backoff, and a rotating key pool
-  (429 → 60s cooldown, 401/403 → key benched) with a full user-facing error matrix
-  (400 / 401 / 403 / 429 / 5xx / timeout / network / bad-JSON).
-- **Admin free-key system.** Hard-coded config file — no backend. See
-  `src/config/examiner.config.ts`: the top of the file contains FULL copy-paste
-  examples for every supported provider (Gemini, OpenAI, OpenRouter, Groq, Mistral,
-  and any custom OpenAI-compatible endpoint). Add one or MANY keys per provider;
-  the app rotates them automatically.
-- **Model picker with two modes.** Users see all models (admin "Free" + their own
-  keys) and choose **Single Model** or **Agent** mode (2–3 models grade the paper
-  as a committee: reconstruct → 3 cross-model reviewers → main adjudicator).
-- **Exam page persisted.** `/examine/:id` runs the grading session with live stage
-  progress; state is persisted in localStorage + IndexedDB, so a refresh never
-  loses the exam.
-- **Code-rendered animated report.** `/report/:id` renders the AI verdict as real
-  UI (score ring with count-up, radar, staggered cards) — never raw AI text.
-  Report language auto-follows the language of the paper/answers.
-- **5 UI languages** via the language button popup: English, বাংলা, हिन्दी, Español,
-  العربية (RTL).
-- **SEO pack**: meta/OG/Twitter tags, hreflang, JSON-LD (WebApplication + FAQ),
-  `sitemap.xml`, `robots.txt`, keyword targeting for "Exam Examiner",
-  "Online Exam Examiner", "AI Exam Examiner", "Free Exam Examiner Online" in all
-  5 app languages.
+Read the full engineering rationale in **`ROADMAP.md`**. Highlights:
 
-## v0.2.1 patch
+- **Marking accuracy rebuilt.** Both modes now run a staged harness instead of
+  one giant pass: *extraction* (canonical question list + answer mapping +
+  per-question image routing) → *focused marking* (small batches, only the
+  relevant images attached) → *dispute adjudication* (agent mode) → *coaching*.
+- **The score bug is dead.** `obtainedMarks`, `totalMarks`, `percentage` and the
+  grade letter are **computed in TypeScript from the per-question breakdown** —
+  the LLM never does arithmetic, so the header can never disagree with the list
+  (the old app could show 16/20 over a 13/20 breakdown).
+- **Consistency + coverage enforcement.** Marks are clamped to each question's
+  maximum, verdict/marks contradictions are auto-corrected, and every extracted
+  question appears in the report exactly once.
+- **Agent committee, smarter.** 3 independent reviewers (Strict / Fair / Error
+  hunter, spread across your selected models) → per-question median → only the
+  genuinely disputed questions go to the adjudicator.
+- **Token usage, no cost math.** Every call's real usage (Gemini
+  `usageMetadata`, OpenAI-compatible `usage`, proxy-forwarded usage) is tracked
+  and shown live during examination and in the report: totals, by phase
+  (extract / grade / review / adjudicate / coach), by model, call count. When a
+  provider hides usage, a clearly-marked ≈ estimate is shown.
+- **New defaults.** Agent mode is the default; when the admin provides free
+  models they are auto-selected until you add your own key or pick your own
+  models — then your choice always wins.
+- **Better UI.** Live per-question result chips and a token meter in the
+  pipeline overlay, verdict filter chips + expand-all + mistakes/correct-steps
+  per question, JSON export / print / copy-summary, confetti at ≥80%, richer
+  animations everywhere.
 
-Smarter network diagnostics: when an AI call fails at the browser level the app now
-tells you *why* — offline, opened as a local file (file://), provider geo-blocked
-(400 FAILED_PRECONDITION, e.g. Gemini in unsupported regions), or a
-blocked connection (VPN / ad-blocker / antivirus / ISP). Messages are localized in
-all 5 languages and include the provider's own error detail.
+## v0.2.x (previous releases)
+
+- API keys added through a validated form with model dropdowns and a Test button.
+- Images compressed before upload (≈1600px JPEG) and archived as heavy WebP
+  after grading; 120s timeouts, status-aware retry with exponential backoff, and
+  a rotating key pool with a full user-facing error matrix.
+- Admin free-key system via Cloudflare encrypted environment variables.
+- Exam page persisted (localStorage + IndexedDB) — a refresh never loses the exam.
+- Code-rendered animated report; report language auto-follows the paper.
+- 5 UI languages (English, বাংলা, हिन्दी, Español, العربية) + SEO pack.
+- v0.2.1: smarter network diagnostics; v0.2.2: official `@google/genai` SDK,
+  Gemini 3.x-safe configs, safety-block and truncation surfaced as real errors.
 
 ## Quick start
 

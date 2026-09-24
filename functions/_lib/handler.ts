@@ -92,7 +92,7 @@ export async function handleAI(request: Request, env: Env, deps: HandlerDeps = {
   for (const key of shuffled(keys).slice(0, 4)) {
     try {
       const out = await callUpstream(provider, req, key, origin, fetchImpl)
-      return json({ ok: true, text: out })
+      return json({ ok: true, text: out.text, ...(out.usage ? { usage: out.usage } : {}) })
     } catch (e) {
       if (e instanceof UpstreamError) {
         lastErr = e

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { motion } from 'framer-motion'
-import { ArrowUpRight, BrainCircuit, FileText, ImagePlus, Settings2, Sparkles, Trash2 } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { ArrowUpRight, BrainCircuit, CircleCheck, FileText, ImagePlus, Settings2, Sparkles, Trash2, Users, Zap } from 'lucide-react'
 import { deleteExam, listExams, saveExam, type ExamRecord, type ExamStatus, type PaperItem, type PaperSide } from '../db'
 import { userModelRefs } from '../lib/settings'
 import { useServerModels } from '../lib/serverModels'
@@ -15,7 +15,7 @@ function emptyExam(): ExamRecord {
 
 export function HomePage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const { t } = useI18n()
-  const { settings } = useSettings()
+  const { settings, update: updateSettings } = useSettings()
   const server = useServerModels()
   const navigate = useNavigate()
   const [exam, setExam] = useState<ExamRecord>(emptyExam)
@@ -75,12 +75,16 @@ export function HomePage({ onOpenSettings }: { onOpenSettings: () => void }) {
     void saveExam({ ...exam, updatedAt: Date.now() }).then(() => navigate(`/examine/${exam.id}`))
   }
 
+  const setMode = (mode: 'single' | 'agent') => updateSettings((s) => ({ ...s, selectionChosen: true, selection: { ...s.selection, mode } }))
+
   const del = async (id: string) => {
     if (!confirm(t('home.deleteConfirm'))) return
     await deleteExam(id)
     setRecent((rows) => rows.filter((r) => r.id !== id))
     if (exam.id === id) setExam(emptyExam())
   }
+
+  const mode = selection.mode
 
   return (
     <div className="content">
@@ -113,9 +117,33 @@ export function HomePage({ onOpenSettings }: { onOpenSettings: () => void }) {
       </div>
 
       <motion.section className="launch-card" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15, duration: 0.4 }}>
-        <div>
+        <div className="launch-card__main">
+          <div className="mode-switch mode-switch--home" role="tablist" aria-label={t('home.mode.title')}>
+            <button className={'mode-btn ' + (mode === 'single' ? 'is-active' : '')} role="tab" aria-selected={mode === 'single'} onClick={() => setMode('single')}>
+              <Zap size={15} />
+              <strong>{t('models.mode.single')}</strong>
+              <span>{t('home.mode.singleDesc')}</span>
+            </button>
+            <button className={'mode-btn ' + (mode === 'agent' ? 'is-active' : '')} role="tab" aria-selected={mode === 'agent'} onClick={() => setMode('agent')}>
+              <Users size={15} />
+              <strong>{t('models.mode.agent')}</strong>
+              <span>{t('home.mode.agentDesc')}</span>
+            </button>
+          </div>
+          <AnimatePresence>
+            {!settings.selectionChosen && anyAvailable && (
+              <motion.div className="notice notice--ok notice--auto" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+                <CircleCheck size={15} /> <span>{t('models.autoNotice')}</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
           <div className="eyebrow"><BrainCircuit size={14} /> {t('models.title')}</div>
           <h3>{selectedModels.length === 0 ? t('models.none.title') : selectedModels.map((m) => m.model).join(' + ')}</h3>
+          <div className="launch-models">
+            {selectedModels.map((m) => (
+              <span className="model-chip" key={`${m.source}:${m.providerId}:${m.model}`}>{m.model}</span>
+            ))}
+          </div>
           <p>{ready ? t('home.launchReady') : t('home.launchAdd')} · {t('home.launchHint', { images: imageCount })}{savedFlash ? ' ✓' : ''}</p>
         </div>
         <div className="launch-actions">

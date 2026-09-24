@@ -42,8 +42,15 @@ export type PublicConfig = {
   limits: { maxBodyBytes: number; maxImages: number; maxTokens: number }
 }
 
-/** Success body is the provider-agnostic text the model produced. */
-export type ProxyOk = { ok: true; text: string }
+/** Real token usage reported by the upstream provider, forwarded to the browser. */
+export type WireUsage = {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+}
+
+/** Success body is the provider-agnostic text the model produced, plus its token usage when reported. */
+export type ProxyOk = { ok: true; text: string; usage?: WireUsage }
 
 export type ProxyErrorCode =
   | 'BAD_REQUEST' | 'BAD_MODEL' | 'FORBIDDEN_ORIGIN' | 'TURNSTILE'

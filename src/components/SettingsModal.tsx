@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Check, CircleCheck, KeyRound, Plus, Trash2, X } from 'lucide-react'
 import type { ProviderType } from '../config/examiner.config'
+import { ADMIN_SETTINGS } from '../config/examiner.config'
 import { AIError, classifyStatus } from '../lib/aiErrors'
-import type { ModelRef, RunMode, UserProviderEntry } from '../lib/settings'
+import { autoSelection, userModelRefs, type ModelRef, type RunMode, type UserProviderEntry } from '../lib/settings'
 import { useServerModels } from '../lib/serverModels'
 import { useSettings } from '../lib/SettingsContext'
 import { useI18n } from '../i18n'
@@ -63,6 +64,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
 function KeysTab() {
   const { t } = useI18n()
   const { settings, update } = useSettings()
+  const server = useServerModels()
   const [type, setType] = useState<ProviderType>('gemini')
   const [label, setLabel] = useState('')
   const [baseURL, setBaseURL] = useState('')
@@ -81,7 +83,16 @@ function KeysTab() {
       keys,
       models,
     }
-    update((s) => ({ ...s, userProviders: [...s.userProviders, entry] }))
+    update((s) => {
+      const userProviders = [...s.userProviders, entry]
+      // The user just added their own key: if they never made an explicit selection,
+      // switch the default selection to THEIR models (agent mode stays the default mode).
+      if (!s.selectionChosen) {
+        const selection = autoSelection(server.models, userModelRefs(userProviders), ADMIN_SETTINGS.maxAgentModels)
+        return { ...s, userProviders, selection }
+      }
+      return { ...s, userProviders }
+    })
     setLabel(''); setKeysText(''); setModelsText(''); setBaseURL('')
   }
 
@@ -173,22 +184,22 @@ function ModelsTab() {
       return out
     })(),
   }), [server.models, settings.userProviders])
-  const max = 3
+  const max = ADMIN_SETTINGS.maxAgentModels
 
   const toggle = (m: ModelRef) => {
     update((s) => {
       if (s.selection.mode === 'single') {
-        return { ...s, selection: { ...s.selection, single: modelKey(s.selection.single ?? ({} as ModelRef)) === modelKey(m) ? null : m } }
+        return { ...s, selectionChosen: true, selection: { ...s.selection, single: modelKey(s.selection.single ?? ({} as ModelRef)) === modelKey(m) ? null : m } }
       }
       const exists = s.selection.agent.some((x) => modelKey(x) === modelKey(m))
       let agent = exists
         ? s.selection.agent.filter((x) => modelKey(x) !== modelKey(m))
         : [...s.selection.agent, m].slice(0, max)
-      return { ...s, selection: { ...s.selection, agent } }
+      return { ...s, selectionChosen: true, selection: { ...s.selection, agent } }
     })
   }
 
-  const setMode = (mode: RunMode) => update((s) => ({ ...s, selection: { ...s.selection, mode } }))
+  const setMode = (mode: RunMode) => update((s) => ({ ...s, selectionChosen: true, selection: { ...s.selection, mode } }))
 
   const selectedKeys = new Set<string>(
     settings.selection.mode === 'single'
@@ -231,6 +242,9 @@ function ModelsTab() {
         {settings.selection.mode === 'single' ? t('models.pickSingle') : t('models.pickAgent', { max })}
         {settings.selection.mode === 'agent' && selectedKeys.size > 0 && ` · ${t('models.selectedCount', { n: selectedKeys.size })}`}
       </p>
+      {!settings.selectionChosen && available.free.length > 0 && (
+        <div className="notice notice--ok notice--auto"><CircleCheck size={15} /> <span>{t('models.autoNotice')}</span></div>
+      )}
       {group(t('models.free'), available.free, available.free.length ? t('models.freeBadge') : undefined)}
       {group(t('models.yours'), available.yours)}
       <TestSelection />

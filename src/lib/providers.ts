@@ -1,10 +1,14 @@
 import type { ProviderType } from '../config/examiner.config'
 import { AIError, classifyStatus, networkError, timeoutError } from './aiErrors'
 import { createGeminiClient, geminiJsonConfig, readGeminiResponse, toGeminiAIError } from './gemini'
+import { estimateUsage, usageFromRaw, type Usage } from './tokens'
 import type { Part } from '@google/genai'
 import type { ProxyErr, ProxyOk, ProxyRequest } from '../../shared/aiWire'
 
 export type ImagePart = { mimeType: string; dataUrl: string }
+
+/** Result of one model call: the text plus real token usage when the provider reports it. */
+export type CallResult = { text: string; usage?: Usage }
 
 export type CallArgs = {
   type: ProviderType
@@ -49,25 +53,27 @@ async function parseErrorBody(response: Response): Promise<string> {
   return raw.slice(0, 300) || `HTTP ${response.status}`
 }
 
-async function readContent(response: Response): Promise<string> {
+async function readContent(response: Response): Promise<{ text: string; usage?: Usage }> {
   if (!response.ok) throw classifyStatus(response.status, await parseErrorBody(response))
   const raw = await response.text().catch(() => '')
   try {
     const json = JSON.parse(raw) as {
+      usage?: unknown
       choices?: Array<{ message?: { content?: unknown } }>
       candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
     }
     const content = json?.choices?.[0]?.message?.content
-    if (typeof content === 'string' && content.trim()) return content
-    if (Array.isArray(content)) {
+    let text = ''
+    if (typeof content === 'string' && content.trim()) text = content
+    else if (Array.isArray(content)) {
       const joined = content.map((p) => (typeof p === 'string' ? p : (p as { text?: string })?.text || '')).join('')
-      if (joined.trim()) return joined
+      if (joined.trim()) text = joined
     }
-    const parts = json?.candidates?.[0]?.content?.parts
-    if (parts?.length) {
-      const joined = parts.map((p) => p.text || '').join('')
-      if (joined.trim()) return joined
+    if (!text) {
+      const parts = json?.candidates?.[0]?.content?.parts
+      if (parts?.length) text = parts.map((p) => p.text || '').join('')
     }
+    if (text.trim()) return { text, usage: usageFromRaw(json.usage) ?? undefined }
   } catch { /* fall through */ }
   throw new AIError('UNREADABLE', 'errors.unreadable', { detail: raw.slice(0, 200) })
 }
@@ -97,7 +103,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
    built per call with the key picked by the key pool; errors are mapped back onto
    the unified AIError taxonomy. */
 
-async function callGemini(args: CallArgs): Promise<string> {
+async function callGemini(args: CallArgs): Promise<CallResult> {
   guardApiKey(args.apiKey)
   const ai = createGeminiClient(args.apiKey, args.timeoutMs ?? TIMEOUT_MS)
   const parts: Part[] = [{ text: args.user }]
@@ -115,7 +121,9 @@ async function callGemini(args: CallArgs): Promise<string> {
         model: args.model,
       }),
     })
-    return readGeminiResponse(response)
+    const text = readGeminiResponse(response)
+    const usage = usageFromRaw(response.usageMetadata) ?? estimateUsage(args.system, args.user, args.images.length, text)
+    return { text, usage }
   } catch (e) {
     throw toGeminiAIError(e)
   }
@@ -123,7 +131,7 @@ async function callGemini(args: CallArgs): Promise<string> {
 
 /* ----------------------------- OpenAI-compatible ----------------------------- */
 
-async function callOpenAICompatible(args: CallArgs): Promise<string> {
+async function callOpenAICompatible(args: CallArgs): Promise<CallResult> {
   guardApiKey(args.apiKey)
   const endpoint = openAIEndpoint(args.type, args.baseURL)
   if (!endpoint) throw new AIError('BAD_REQUEST', 'errors.badRequest', { detail: 'Missing baseURL for custom provider' })
@@ -159,7 +167,12 @@ async function callOpenAICompatible(args: CallArgs): Promise<string> {
       if (err.retryable && i < attempts.length - 1) { lastError = err; continue }
       throw err
     }
-    if (response.ok) return readContent(response)
+    if (response.ok) {
+      const out = await readContent(response)
+      if (out.usage) return out
+      // Provider did not report usage — record a marked estimate instead of losing the call.
+      return { text: out.text, usage: estimateUsage(args.system, args.user, args.images.length, out.text) }
+    }
     const err = classifyStatus(response.status, await parseErrorBody(response))
     // 400 often means "response_format not supported" → fall through to next attempt
     if (err.code === 'BAD_REQUEST' && i < attempts.length - 1) { lastError = err; continue }
@@ -194,7 +207,7 @@ function stripDataUrl(dataUrl: string): string {
   return i >= 0 ? dataUrl.slice(i + 1) : dataUrl
 }
 
-async function callProxy(args: CallArgs): Promise<string> {
+async function callProxy(args: CallArgs): Promise<CallResult> {
   if (!args.proxy) throw new AIError('BAD_REQUEST', 'errors.badRequest', { detail: 'Missing proxy target' })
   const payload: ProxyRequest = {
     providerId: args.proxy.providerId,
@@ -217,7 +230,10 @@ async function callProxy(args: CallArgs): Promise<string> {
   let data: ProxyOk | ProxyErr | null = null
   try { data = (await response.json()) as ProxyOk | ProxyErr } catch { /* non-JSON (e.g. platform error page) */ }
 
-  if (data && data.ok === true && typeof data.text === 'string') return data.text
+  if (data && data.ok === true && typeof data.text === 'string') {
+    const usage = usageFromRaw(data.usage) ?? estimateUsage(args.system, args.user, args.images.length, data.text)
+    return { text: data.text, usage }
+  }
   if (data && data.ok === false && PROXY_ERROR_MAP[data.code]) throw PROXY_ERROR_MAP[data.code](data.message)
   // The endpoint is missing/misconfigured (e.g. `vite dev` without Functions returns index.html or 404).
   throw classifyStatus(response.status || 0, 'The shared AI service is not available. Add your own API key in Settings.')
@@ -225,7 +241,7 @@ async function callProxy(args: CallArgs): Promise<string> {
 
 /* ---------------------------------- Router ---------------------------------- */
 
-export async function callModelText(args: CallArgs): Promise<string> {
+export async function callModelText(args: CallArgs): Promise<CallResult> {
   if (args.proxy) return callProxy(args)
   if (args.type === 'gemini') return callGemini(args)
   return callOpenAICompatible(args)

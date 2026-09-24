@@ -1,4 +1,4 @@
-import type { ProxyErr, ProxyErrorCode, ProxyRequest } from '../../shared/aiWire'
+import type { ProxyErr, ProxyErrorCode, ProxyRequest, WireUsage } from '../../shared/aiWire'
 import { LIMITS, type ServerProvider } from './config'
 
 /** Thrown by adapters; carries a safe, key-free message and whether trying another key could help. */
@@ -16,6 +16,23 @@ export class UpstreamError extends Error {
   toWire(): ProxyErr {
     return { ok: false, code: this.code, message: this.message }
   }
+}
+
+/** Result of a successful upstream call: the text plus real token usage when the provider reports it. */
+export type UpstreamResult = { text: string; usage?: WireUsage }
+
+/** Normalize a provider usage payload onto the wire shape (OpenAI style or Gemini style). */
+function normalizeUsage(raw: unknown): WireUsage | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const r = raw as Record<string, unknown>
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined)
+  const prompt = num(r.prompt_tokens) ?? num(r.promptTokenCount) ?? num(r.promptTokens)
+  const completion = num(r.completion_tokens) ?? num(r.candidatesTokenCount) ?? num(r.completionTokens)
+  const total = num(r.total_tokens) ?? num(r.totalTokenCount) ?? num(r.totalTokens)
+  if (prompt === undefined && completion === undefined && total === undefined) return undefined
+  const p = prompt ?? Math.max(0, (total ?? 0) - (completion ?? 0))
+  const c = completion ?? Math.max(0, (total ?? 0) - p)
+  return { promptTokens: p, completionTokens: c, totalTokens: total ?? p + c }
 }
 
 const OPENAI_ENDPOINTS: Record<string, string> = {
@@ -78,7 +95,7 @@ async function errorDetail(r: Response): Promise<string> {
 
 /* ---------------------------------- Gemini ---------------------------------- */
 
-export async function callGeminiUpstream(req: ProxyRequest, key: string, fetchImpl: typeof fetch = fetch): Promise<string> {
+export async function callGeminiUpstream(req: ProxyRequest, key: string, fetchImpl: typeof fetch = fetch): Promise<UpstreamResult> {
   const parts: Array<Record<string, unknown>> = [{ text: req.user }]
   for (const img of req.images) parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } })
 
@@ -110,6 +127,7 @@ export async function callGeminiUpstream(req: ProxyRequest, key: string, fetchIm
   if (!r.ok) throw classify(r.status, await errorDetail(r), [key])
 
   let json: {
+    usageMetadata?: unknown
     promptFeedback?: { blockReason?: string }
     candidates?: Array<{ finishReason?: string; content?: { parts?: Array<{ text?: string }> } }>
   }
@@ -125,7 +143,7 @@ export async function callGeminiUpstream(req: ProxyRequest, key: string, fetchIm
     // Truncated JSON is poison: report as retryable-unreadable so the browser re-runs the step.
     throw new UpstreamError('UPSTREAM_UNREADABLE', `Output was cut off (${cand.finishReason}).`, 502)
   }
-  return text
+  return { text, usage: normalizeUsage(json.usageMetadata) }
 }
 
 /* ------------------------------ OpenAI-compatible ------------------------------ */
@@ -136,7 +154,7 @@ export async function callOpenAICompatUpstream(
   key: string,
   origin: string,
   fetchImpl: typeof fetch = fetch,
-): Promise<string> {
+): Promise<UpstreamResult> {
   const endpoint = OPENAI_ENDPOINTS[provider.type]
   if (!endpoint) throw new UpstreamError('NOT_CONFIGURED', 'This provider type is not proxyable.', 500)
 
@@ -166,14 +184,16 @@ export async function callOpenAICompatUpstream(
   for (let i = 0; i < attempts.length; i++) {
     const r = await fetchWithTimeout(fetchImpl, endpoint, { method: 'POST', headers, body: JSON.stringify(attempts[i]) }, LIMITS.upstreamTimeoutMs)
     if (r.ok) {
-      let json: { choices?: Array<{ message?: { content?: unknown } }> }
+      let json: { usage?: unknown; choices?: Array<{ message?: { content?: unknown } }> }
       try { json = await r.json() as typeof json } catch { throw new UpstreamError('UPSTREAM_UNREADABLE', 'The AI provider returned an unreadable response.', 502) }
       const c = json?.choices?.[0]?.message?.content
-      if (typeof c === 'string' && c.trim()) return c
-      if (Array.isArray(c)) {
+      let text = ''
+      if (typeof c === 'string' && c.trim()) text = c
+      else if (Array.isArray(c)) {
         const joined = c.map((p) => (typeof p === 'string' ? p : (p as { text?: string })?.text || '')).join('')
-        if (joined.trim()) return joined
+        if (joined.trim()) text = joined
       }
+      if (text.trim()) return { text, usage: normalizeUsage(json.usage) }
       throw new UpstreamError('UPSTREAM_UNREADABLE', 'The AI provider returned an empty answer.', 502)
     }
     const err = classify(r.status, await errorDetail(r), [key])
@@ -191,7 +211,7 @@ export function callUpstream(
   key: string,
   origin: string,
   fetchImpl: typeof fetch = fetch,
-): Promise<string> {
+): Promise<UpstreamResult> {
   return provider.type === 'gemini'
     ? callGeminiUpstream(req, key, fetchImpl)
     : callOpenAICompatUpstream(provider, req, key, origin, fetchImpl)

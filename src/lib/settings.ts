@@ -42,6 +42,10 @@ export type KeyHealth = Record<string, KeyHealthState>
 export type Settings = {
   userProviders: UserProviderEntry[]
   selection: Selection
+  /** false until the user picks a model/mode themselves — while false the app
+   *  keeps the default selection in sync with what is available (admin/free first,
+   *  the user's own models once they add a key). See autoSelection(). */
+  selectionChosen: boolean
   keyHealth: KeyHealth
   lastRunDate: string
   runsToday: number
@@ -50,7 +54,34 @@ export type Settings = {
 const SETTINGS_KEY = 'paper-examiner-settings-v2'
 
 export function defaultSettings(): Settings {
-  return { userProviders: [], selection: { mode: 'single', single: null, agent: [] }, keyHealth: {}, lastRunDate: '', runsToday: 0 }
+  return { userProviders: [], selection: { mode: 'agent', single: null, agent: [] }, selectionChosen: false, keyHealth: {}, lastRunDate: '', runsToday: 0 }
+}
+
+/**
+ * The default selection (ROADMAP.md §4): Agent mode with up to `maxAgent` models —
+ * the user's own models once they have any, otherwise the admin/free catalogue
+ * (spread across providers when possible). Used ONLY while selectionChosen is false.
+ */
+export function autoSelection(free: ModelRef[], yours: ModelRef[], maxAgent: number): Selection {
+  const pool = yours.length > 0 ? yours : free
+  if (pool.length === 0) return { mode: 'agent', single: null, agent: [] }
+  // spread across distinct providers first, then fill up
+  const byProvider = new Map<string, ModelRef[]>()
+  for (const m of pool) {
+    const list = byProvider.get(m.providerId) ?? []
+    list.push(m)
+    byProvider.set(m.providerId, list)
+  }
+  const agent: ModelRef[] = []
+  for (const list of byProvider.values()) {
+    if (agent.length >= maxAgent) break
+    agent.push(list[0])
+  }
+  for (const m of pool) {
+    if (agent.length >= maxAgent) break
+    if (!agent.some((a) => a.source === m.source && a.providerId === m.providerId && a.model === m.model)) agent.push(m)
+  }
+  return { mode: 'agent', single: agent[0], agent }
 }
 
 /**
@@ -90,6 +121,11 @@ export function loadSettings(): Settings {
             agent: Array.isArray(sel.agent) ? sel.agent.map(scrubModelRef).filter((m): m is ModelRef => m !== null) : [],
           }
         : s.selection,
+      // migration: an existing user who had explicitly picked models counts as "chosen";
+      // everyone else gets the v0.3 defaults (agent + auto-selected models).
+      selectionChosen: typeof parsed.selectionChosen === 'boolean'
+        ? parsed.selectionChosen
+        : !!(sel && (scrubModelRef(sel.single) || (Array.isArray(sel.agent) && sel.agent.length > 0))),
       // health entries for shared keys are meaningless now (rotation is server-side) — drop them
       keyHealth: parsed.keyHealth && typeof parsed.keyHealth === 'object'
         ? Object.fromEntries(Object.entries(parsed.keyHealth).filter(([fp]) => !fp.startsWith('admin:')))

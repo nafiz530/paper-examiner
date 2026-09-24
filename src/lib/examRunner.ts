@@ -3,7 +3,7 @@ import { compressImage } from './compress'
 import { blobToDataUrl } from './compress'
 import { loadSettings, saveSettings, type ModelRef, type Selection } from './settings'
 import { ADMIN_SETTINGS } from '../config/examiner.config'
-import { runAgentMode, runSingleMode, normalizeReport } from './pipeline'
+import { runExamination } from './pipeline'
 import { AIError } from './aiErrors'
 import type { ProgressEvent } from './pipeline'
 import type { ImagePart } from './providers'
@@ -29,26 +29,52 @@ export function recordRun(selection: Selection) {
   saveSettings(s)
 }
 
+/**
+ * Build the raw material text. Images are numbered IMAGE 1..N across both sides in
+ * attachment order, so the extraction phase can route per-question images precisely
+ * (see pickImages() in pipeline.ts).
+ */
 export async function collectMaterial(exam: ExamRecord): Promise<{ text: string; images: ImagePart[] }> {
-  const label = (side: string, items: ExamRecord['questions']) => items.map((item, i) =>
-    item.type === 'text'
-      ? `ITEM ${i + 1} (${side}) TEXT:\n${item.text}`
-      : `ITEM ${i + 1} (${side}) IMAGE: ${item.name} [attached as image ${item.id}]`,
-  )
-  const text = [
+  const imageItems: Array<ExamRecord['questions'][number] & { type: 'image' }> = []
+  const lines: string[] = [
     `PAPER NAME: ${exam.title || '(unnamed)'}`,
     `SUBJECT: ${exam.subject || '(unspecified)'}`,
     exam.totalMarks ? `DECLARED TOTAL MARKS: ${exam.totalMarks}` : 'DECLARED TOTAL MARKS: unknown — infer from the paper.',
     '',
-    label('QUESTION SIDE', exam.questions).join('\n\n'),
-    '',
-    label('ANSWER SIDE', exam.answers).join('\n\n'),
-  ].join('\n')
-  const images: ImagePart[] = []
-  for (const item of [...exam.questions, ...exam.answers]) {
-    if (item.type === 'image') images.push({ mimeType: item.mimeType || item.blob.type || 'image/jpeg', dataUrl: await blobToDataUrl(item.blob) })
+  ]
+
+  const side = (name: string, items: ExamRecord['questions']) => {
+    lines.push(`${name}:`)
+    if (items.length === 0) {
+      lines.push('(no items)')
+    } else {
+      items.forEach((item, i) => {
+        if (item.type === 'text') {
+          lines.push(`- TEXT ITEM ${i + 1}: ${item.text}`)
+        } else {
+          const imageNo = imageItems.length + 1
+          imageItems.push(item)
+          lines.push(`- IMAGE ${imageNo}: ${item.name} (${name === 'ANSWER SIDE' ? 'answer' : 'question'} photo)`)
+        }
+      })
+    }
+    lines.push('')
   }
-  return { text, images }
+
+  side('QUESTION SIDE', exam.questions)
+  side('ANSWER SIDE', exam.answers)
+
+  lines.push(imageItems.length > 0
+    ? `All ${imageItems.length} image(s) are attached to this request in the order IMAGE 1 … IMAGE ${imageItems.length}.`
+    : 'No images are attached to this request (all material is text).')
+
+  const dataUrls = await Promise.all(imageItems.map((item) => blobToDataUrl(item.blob)))
+  const images: ImagePart[] = imageItems.map((item, i) => ({
+    mimeType: item.mimeType || item.blob.type || 'image/jpeg',
+    dataUrl: dataUrls[i],
+  }))
+
+  return { text: lines.join('\n'), images }
 }
 
 export async function runExam(
@@ -62,18 +88,21 @@ export async function runExam(
   await saveExam({ ...exam, status: 'running', errorKey: undefined, errorDetail: undefined })
   recordRun(selection)
 
-  let raw: Record<string, unknown>
+  let report
   try {
-    raw = selection.mode === 'single'
-      ? await runSingleMode(models[0], text, images, onProgress)
-      : await runAgentMode(models, text, images, onProgress)
+    report = await runExamination({
+      mode: selection.mode,
+      models,
+      material: text,
+      images,
+      declaredTotal: exam.totalMarks ?? null,
+      onProgress,
+    })
   } catch (e) {
     const err = e instanceof AIError ? e : new AIError('UNKNOWN', 'errors.unknown')
     await saveExam({ ...exam, status: 'failed', errorKey: err.i18nKey, errorDetail: err.detail })
     throw err
   }
-
-  const report = normalizeReport(raw, selection.mode, models)
 
   // Persist result
   const done: ExamRecord = { ...exam, status: 'done', evaluation: report, errorKey: undefined, errorDetail: undefined }

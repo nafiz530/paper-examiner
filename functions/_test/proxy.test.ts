@@ -81,6 +81,23 @@ const run = async () => {
     ok('gemini 3.x request has NO temperature', calls[0].body.generationConfig.temperature === undefined)
   }
 
+  console.log('\n[token usage passthrough (v0.3)]')
+  { _resetRateLimitMemory()
+    const geminiWithUsage = new Response(JSON.stringify({
+      candidates: [{ finishReason: 'STOP', content: { parts: [{ text: '{"a":1}' }] } }],
+      usageMetadata: { promptTokenCount: 120, candidatesTokenCount: 30, totalTokenCount: 150 },
+    }), { status: 200 })
+    const { f } = mkFetch(() => geminiWithUsage)
+    const r = await handleAI(post(goodBody()), baseEnv(), { fetchImpl: f, providers })
+    const j = (await r.json()) as { ok: boolean; text: string; usage?: { promptTokens: number; completionTokens: number; totalTokens: number } }
+    ok('usage is forwarded to the browser', j.ok === true && j.usage != null && j.usage.promptTokens === 120 && j.usage.completionTokens === 30 && j.usage.totalTokens === 150)
+    const noUsage = new Response(JSON.stringify({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: '{}' }] } }] }), { status: 200 })
+    const { f: f2 } = mkFetch(() => noUsage)
+    const r2 = await handleAI(post(goodBody()), baseEnv(), { fetchImpl: f2, providers })
+    const j2 = (await r2.json()) as { ok: boolean; usage?: unknown }
+    ok('missing upstream usage → field simply absent (not an error)', r2.status === 200 && j2.ok === true && j2.usage === undefined)
+  }
+
   console.log('\n[key rotation + safe errors]')
   { _resetRateLimitMemory()
     // key A rejected (403 leaked), key B works → must succeed via rotation
