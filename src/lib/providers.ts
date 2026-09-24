@@ -1,5 +1,7 @@
 import type { ProviderType } from '../config/examiner.config'
 import { AIError, classifyStatus, networkError, timeoutError } from './aiErrors'
+import { createGeminiClient, geminiJsonConfig, readGeminiResponse, toGeminiAIError } from './gemini'
+import type { Part } from '@google/genai'
 
 export type ImagePart = { mimeType: string; dataUrl: string }
 
@@ -17,7 +19,6 @@ export type CallArgs = {
   timeoutMs?: number
 }
 
-const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta'
 const TIMEOUT_MS = 90_000
 
 type OpenAIContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }
@@ -88,28 +89,32 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 }
 
 /* ---------------------------------- Gemini ---------------------------------- */
-
-type GeminiPart = { text: string } | { inlineData: { mimeType: string; data: string } }
+/* Implemented on the official @google/genai SDK (see ./gemini.ts). The client is
+   built per call with the key picked by the key pool; errors are mapped back onto
+   the unified AIError taxonomy. */
 
 async function callGemini(args: CallArgs): Promise<string> {
   guardApiKey(args.apiKey)
-  const url = `${GEMINI_BASE}/${encodeURIComponent(args.model)}:generateContent?key=${encodeURIComponent(args.apiKey.trim())}`
-  const parts: GeminiPart[] = [{ text: args.user }]
+  const ai = createGeminiClient(args.apiKey, args.timeoutMs ?? TIMEOUT_MS)
+  const parts: Part[] = [{ text: args.user }]
   for (const img of args.images) {
     parts.push({ inlineData: { mimeType: img.mimeType, data: img.dataUrl.split(',')[1] || '' } })
   }
-  const body = {
-    systemInstruction: { parts: [{ text: args.system }] },
-    contents: [{ role: 'user', parts }],
-    generationConfig: {
-      temperature: 0.15,
-      maxOutputTokens: args.maxTokens,
-      responseMimeType: 'application/json',
-      responseSchema: args.schema,
-    },
+  try {
+    const response = await ai.models.generateContent({
+      model: args.model.trim(),
+      contents: { role: 'user', parts },
+      config: geminiJsonConfig({
+        system: args.system,
+        schema: args.schema,
+        maxTokens: args.maxTokens,
+        model: args.model,
+      }),
+    })
+    return readGeminiResponse(response)
+  } catch (e) {
+    throw toGeminiAIError(e)
   }
-  const response = await fetchWithTimeout(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, args.timeoutMs ?? TIMEOUT_MS)
-  return readContent(response)
 }
 
 /* ----------------------------- OpenAI-compatible ----------------------------- */

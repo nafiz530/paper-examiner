@@ -1,3 +1,4 @@
+import { createGeminiClient, toGeminiAIError } from './lib/gemini'
 export type AIProvider = 'gemini' | 'openai' | 'mistral' | 'openrouter' | 'groq'
 
 export type AIConfig = {
@@ -47,14 +48,20 @@ export async function testAIConnection(config: AIConfig): Promise<string> {
   if (!config.model.trim()) throw new Error('Enter the exact full model ID first.')
 
   if (config.provider === 'gemini') {
-    const url = PROVIDERS.gemini.endpoint + '/' + encodeURIComponent(config.model.trim()) + ':generateContent?key=' + encodeURIComponent(config.apiKey.trim())
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: 'Reply with exactly: CONNECTION_OK' }] }], generationConfig: { maxOutputTokens: 8 } }),
-    })
-    if (!response.ok) throw new Error(await parseError(response))
-    return 'Connection verified.'
+    const ai = createGeminiClient(config.apiKey.trim())
+    try {
+      const response = await ai.models.generateContent({
+        model: config.model.trim(),
+        contents: 'Reply with exactly: CONNECTION_OK',
+        config: { maxOutputTokens: 16 },
+      })
+      const text = (response.candidates?.[0]?.content?.parts ?? []).map((pt) => pt.text || '').join('')
+      if (!text.trim()) throw new Error('Gemini returned an empty response.')
+      return 'Connection verified.'
+    } catch (e) {
+      const err = toGeminiAIError(e)
+      throw new Error(err.detail || err.code)
+    }
   }
 
   const response = await fetch(PROVIDERS[config.provider].endpoint, {

@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@google/genai": "^1.30.0",
     "framer-motion": "^13.4.2",
     "lucide-react": "latest",
     "react": "latest",
