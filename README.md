@@ -36,6 +36,14 @@ Works entirely in the browser. No backend, no server to run.
   "Online Exam Examiner", "AI Exam Examiner", "Free Exam Examiner Online" in all
   5 app languages.
 
+## v0.2.1 patch
+
+Smarter network diagnostics: when an AI call fails at the browser level the app now
+tells you *why* — offline, opened as a local file (file://), provider geo-blocked
+(400 FAILED_PRECONDITION, e.g. Gemini in unsupported regions), or a
+blocked connection (VPN / ad-blocker / antivirus / ISP). Messages are localized in
+all 5 languages and include the provider's own error detail.
+
 ## Quick start
 
 ```bash

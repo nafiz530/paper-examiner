@@ -7,6 +7,7 @@ export type AIErrorCode =
   | 'BAD_MODEL'
   | 'UNAUTHORIZED'
   | 'FORBIDDEN'
+  | 'GEO_BLOCKED'
   | 'RATE_LIMITED'
   | 'QUOTA'
   | 'SERVER'
@@ -23,11 +24,14 @@ export type ErrorI18nKey =
   | 'errors.badModel'
   | 'errors.unauthorized'
   | 'errors.forbidden'
+  | 'errors.geoBlocked'
   | 'errors.rateLimited'
   | 'errors.quota'
   | 'errors.server'
   | 'errors.timeout'
   | 'errors.network'
+  | 'errors.networkOffline'
+  | 'errors.networkFile'
   | 'errors.badJson'
   | 'errors.unreadable'
   | 'errors.unknown'
@@ -73,6 +77,10 @@ export function classifyStatus(status: number, providerDetail?: string): AIError
   const detail = providerDetail || undefined
   switch (status) {
     case 400:
+      // Gemini returns 400 FAILED_PRECONDITION when the caller's region is not supported.
+      if (detail && /location is not supported|failed_precondition/i.test(detail)) {
+        return new AIError('GEO_BLOCKED', 'errors.geoBlocked', { status, detail })
+      }
       return new AIError('BAD_REQUEST', 'errors.badRequest', { status, detail })
     case 401:
       return new AIError('UNAUTHORIZED', 'errors.unauthorized', { status, detail })
@@ -102,7 +110,14 @@ export function timeoutError(): AIError {
   return new AIError('TIMEOUT', 'errors.timeout', { retryable: true })
 }
 
+/** Browser-level request failure. The message pinpoints the most likely cause. */
 export function networkError(detail?: string): AIError {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return new AIError('NETWORK', 'errors.networkOffline', { detail, retryable: true })
+  }
+  if (typeof location !== 'undefined' && location.protocol === 'file:') {
+    return new AIError('NETWORK', 'errors.networkFile', { detail, retryable: false })
+  }
   return new AIError('NETWORK', 'errors.network', { detail, retryable: true })
 }
 

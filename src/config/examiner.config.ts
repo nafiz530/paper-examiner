@@ -79,10 +79,8 @@ export const ADMIN_PROVIDERS: AdminProvider[] = [
     id: 'gemini-free',
     type: 'gemini',
     label: 'Google Gemini (Free)',
-    // 🔑 Admin key — rotate via the pool if you add more keys
-    keys: ['AIzaSyDcJa5_GMWbkZiaIlojaTt8fKMqmGik_F0'],
-    // Exact model IDs offered to users under this provider
-    models: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'],
+    keys: ['PASTE_YOUR_GEMINI_API_KEY_1', 'PASTE_YOUR_GEMINI_API_KEY_2'],
+    models: ['gemini-2.5-flash', 'gemini-2.0-flash'],
     enabled: true,
   },
   {
@@ -101,9 +99,8 @@ export const ADMIN_PROVIDERS: AdminProvider[] = [
 export const ADMIN_SETTINGS = {
   /** shown under the "Free" badge in the model picker */
   freeTierLabel: 'Provided for you',
-  /** gentle client-side cap: max AI examinations per browser per day on admin keys.
-   *  NOTE: Gemini free tier limits are also enforced server-side (~500 requests/day). */
-  freeExamsPerDay: 500,
+  /** gentle client-side cap: max AI examinations per browser per day on admin keys */
+  freeExamsPerDay: 25,
   /** max models a user may select at once in Agent mode */
   maxAgentModels: 3,
 }

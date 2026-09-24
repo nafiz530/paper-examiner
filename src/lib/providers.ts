@@ -78,7 +78,10 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
     return await fetch(url, { ...init, signal: controller.signal })
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') throw timeoutError()
-    throw networkError(e instanceof Error ? e.message : undefined)
+    let host = ''
+    try { host = new URL(url).host } catch { /* keep empty */ }
+    const msg = e instanceof Error ? e.message : undefined
+    throw networkError(host && msg ? `${msg} (${host})` : (msg || (host ? `request to ${host} failed` : undefined)))
   } finally {
     clearTimeout(timer)
   }
