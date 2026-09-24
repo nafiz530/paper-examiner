@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Check, CircleAlert, CircleCheck, KeyRound, Plus, Trash2, X } from 'lucide-react'
-import { ADMIN_PROVIDERS, type ProviderType } from '../config/examiner.config'
+import { Check, CircleCheck, KeyRound, Plus, Trash2, X } from 'lucide-react'
+import type { ProviderType } from '../config/examiner.config'
 import { AIError, classifyStatus } from '../lib/aiErrors'
-import { adminModelRefs, keyFp, looksPlaceholder, type ModelRef, type RunMode, type UserProviderEntry } from '../lib/settings'
+import type { ModelRef, RunMode, UserProviderEntry } from '../lib/settings'
+import { useServerModels } from '../lib/serverModels'
 import { useSettings } from '../lib/SettingsContext'
 import { useI18n } from '../i18n'
 import { callModelText } from '../lib/providers'
+import { proxyTarget } from '../lib/pipeline'
 
 const PROVIDER_OPTIONS: Array<{ value: ProviderType; label: string }> = [
   { value: 'gemini', label: 'Google Gemini' },
@@ -143,17 +145,12 @@ function maskKey(k: string): string {
 
 function AdminKeyStatus() {
   const { t } = useI18n()
-  const admin = ADMIN_PROVIDERS.filter((p) => p.enabled)
-  if (admin.length === 0) return null
-  const anyReal = admin.some((p) => p.keys.some((k) => !looksPlaceholder(k)))
+  const server = useServerModels()
+  if (!server.loaded || server.providers.length === 0) return null
   return (
-    <div className={'notice ' + (anyReal ? 'notice--ok' : 'notice--warn')}>
-      {anyReal ? <CircleCheck size={15} /> : <CircleAlert size={15} />}
-      <span>
-        {anyReal
-          ? `${t('models.free')}: ${admin.map((p) => p.label).join(', ')}`
-          : t('errors.placeholderKey')}
-      </span>
+    <div className="notice notice--ok">
+      <CircleCheck size={15} />
+      <span>{`${t('models.free')}: ${server.providers.map((p) => p.label).join(', ')}`}</span>
     </div>
   )
 }
@@ -163,8 +160,9 @@ function AdminKeyStatus() {
 function ModelsTab() {
   const { t } = useI18n()
   const { settings, update } = useSettings()
+  const server = useServerModels()
   const available = useMemo(() => ({
-    free: adminModelRefs(),
+    free: server.models,
     yours: (() => {
       const out: ModelRef[] = []
       for (const p of settings.userProviders) {
@@ -174,7 +172,7 @@ function ModelsTab() {
       }
       return out
     })(),
-  }), [settings.userProviders])
+  }), [server.models, settings.userProviders])
   const max = 3
 
   const toggle = (m: ModelRef) => {
@@ -251,7 +249,7 @@ function TestSelection() {
     setState({ busy: true })
     try {
       await callModelText({
-        type: model.type, baseURL: model.baseURL, model: model.model, apiKey: model.keys[0],
+        type: model.type, baseURL: model.baseURL, model: model.model, apiKey: model.keys[0] ?? '', proxy: proxyTarget(model),
         system: 'You are a connection tester.', user: 'Reply with exactly: CONNECTION_OK',
         images: [], schemaName: 'noop', schema: { type: 'object' }, maxTokens: 16, timeoutMs: 20_000,
       })

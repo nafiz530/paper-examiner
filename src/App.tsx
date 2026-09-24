@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AnimatePresence } from 'framer-motion'
 import { I18nProvider, useI18n } from './i18n'
 import { SettingsProvider } from './lib/SettingsContext'
+import { ServerModelsProvider } from './lib/serverModels'
 import { TopBar } from './components/TopBar'
 import { SettingsModal } from './components/SettingsModal'
 import { HomePage } from './pages/HomePage'
@@ -39,9 +40,11 @@ export default function App() {
   return (
     <I18nProvider>
       <SettingsProvider>
-        <BrowserRouter>
-          <Shell />
-        </BrowserRouter>
+        <ServerModelsProvider>
+          <BrowserRouter>
+            <Shell />
+          </BrowserRouter>
+        </ServerModelsProvider>
       </SettingsProvider>
     </I18nProvider>
   )

@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ArrowUpRight, BrainCircuit, FileText, ImagePlus, Settings2, Sparkles, Trash2 } from 'lucide-react'
 import { deleteExam, listExams, saveExam, type ExamRecord, type ExamStatus, type PaperItem, type PaperSide } from '../db'
-import { adminModelRefs, userModelRefs } from '../lib/settings'
+import { userModelRefs } from '../lib/settings'
+import { useServerModels } from '../lib/serverModels'
 import { useSettings } from '../lib/SettingsContext'
 import { useI18n } from '../i18n'
 import { Workspace } from '../components/Workspace'
@@ -15,6 +16,7 @@ function emptyExam(): ExamRecord {
 export function HomePage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const { t } = useI18n()
   const { settings } = useSettings()
+  const server = useServerModels()
   const navigate = useNavigate()
   const [exam, setExam] = useState<ExamRecord>(emptyExam)
   const [loaded, setLoaded] = useState(false)
@@ -65,7 +67,7 @@ export function HomePage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const imageCount = useMemo(() => [...exam.questions, ...exam.answers].filter((x) => x.type === 'image').length, [exam])
   const selection = settings.selection
   const selectedModels = selection.mode === 'single' ? (selection.single ? [selection.single] : []) : selection.agent
-  const available = useMemo(() => ({ free: adminModelRefs(), yours: userModelRefs(settings.userProviders) }), [settings.userProviders])
+  const available = useMemo(() => ({ free: server.models, yours: userModelRefs(settings.userProviders) }), [server.models, settings.userProviders])
   const anyAvailable = available.free.length + available.yours.length > 0
 
   const run = () => {

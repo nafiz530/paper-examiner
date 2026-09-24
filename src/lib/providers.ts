@@ -2,6 +2,7 @@ import type { ProviderType } from '../config/examiner.config'
 import { AIError, classifyStatus, networkError, timeoutError } from './aiErrors'
 import { createGeminiClient, geminiJsonConfig, readGeminiResponse, toGeminiAIError } from './gemini'
 import type { Part } from '@google/genai'
+import type { ProxyErr, ProxyOk, ProxyRequest } from '../../shared/aiWire'
 
 export type ImagePart = { mimeType: string; dataUrl: string }
 
@@ -9,7 +10,10 @@ export type CallArgs = {
   type: ProviderType
   baseURL?: string
   model: string
+  /** BYOK key. Empty when `proxy` is set — shared keys never reach the browser. */
   apiKey: string
+  /** When set, the call goes to our own /api/ai proxy (the shared "Provided for you" tier). */
+  proxy?: { providerId: string; turnstileToken?: string }
   system: string
   user: string
   images: ImagePart[]
@@ -164,9 +168,65 @@ async function callOpenAICompatible(args: CallArgs): Promise<string> {
   throw lastError ?? new AIError('UNKNOWN', 'errors.unknown')
 }
 
+/* ------------------------------ Shared-tier proxy ------------------------------ */
+/* The browser sends a *semantic* request to our own origin. It never sends a key or an upstream URL;
+   the Pages Function (functions/api/ai.ts) picks the key from encrypted env vars. */
+
+const PROXY_ERROR_MAP: Record<ProxyErr['code'], (m: string) => AIError> = {
+  BAD_REQUEST: (m) => new AIError('BAD_REQUEST', 'errors.badRequest', { status: 400, detail: m }),
+  UPSTREAM_BAD_REQUEST: (m) => new AIError('BAD_REQUEST', 'errors.badRequest', { status: 400, detail: m }),
+  PAYLOAD_TOO_LARGE: (m) => new AIError('BAD_REQUEST', 'errors.badRequest', { status: 413, detail: m }),
+  BAD_MODEL: (m) => new AIError('BAD_MODEL', 'errors.badModel', { status: 404, detail: m }),
+  FORBIDDEN_ORIGIN: (m) => new AIError('FORBIDDEN', 'errors.forbidden', { status: 403, detail: m }),
+  TURNSTILE: (m) => new AIError('FORBIDDEN', 'errors.forbidden', { status: 403, detail: m, retryable: false }),
+  RATE_LIMITED: (m) => new AIError('RATE_LIMITED', 'errors.rateLimited', { status: 429, detail: m, retryable: true }),
+  UPSTREAM_QUOTA: (m) => new AIError('RATE_LIMITED', 'errors.rateLimited', { status: 429, detail: m, retryable: true }),
+  // The shared key is unavailable. The user cannot fix that, so don't burn retries — point them at BYOK.
+  UPSTREAM_AUTH: (m) => new AIError('NO_KEY', 'errors.noKey', { status: 503, detail: m, retryable: false }),
+  NOT_CONFIGURED: (m) => new AIError('NO_KEY', 'errors.noKey', { status: 503, detail: m, retryable: false }),
+  UPSTREAM_SERVER: (m) => new AIError('SERVER', 'errors.server', { status: 502, detail: m, retryable: true }),
+  UPSTREAM_TIMEOUT: (m) => new AIError('TIMEOUT', 'errors.timeout', { status: 504, detail: m, retryable: true }),
+  UPSTREAM_UNREADABLE: (m) => new AIError('UNREADABLE', 'errors.unreadable', { status: 502, detail: m, retryable: true }),
+}
+
+function stripDataUrl(dataUrl: string): string {
+  const i = dataUrl.indexOf(',')
+  return i >= 0 ? dataUrl.slice(i + 1) : dataUrl
+}
+
+async function callProxy(args: CallArgs): Promise<string> {
+  if (!args.proxy) throw new AIError('BAD_REQUEST', 'errors.badRequest', { detail: 'Missing proxy target' })
+  const payload: ProxyRequest = {
+    providerId: args.proxy.providerId,
+    model: args.model,
+    system: args.system,
+    user: args.user,
+    images: args.images.map((img) => ({ mimeType: img.mimeType, data: stripDataUrl(img.dataUrl) })),
+    schemaName: args.schemaName,
+    schema: args.schema,
+    maxTokens: args.maxTokens,
+    turnstileToken: args.proxy.turnstileToken,
+  }
+  const response = await fetchWithTimeout('/api/ai', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify(payload),
+  }, args.timeoutMs ?? TIMEOUT_MS + 15_000)
+
+  let data: ProxyOk | ProxyErr | null = null
+  try { data = (await response.json()) as ProxyOk | ProxyErr } catch { /* non-JSON (e.g. platform error page) */ }
+
+  if (data && data.ok === true && typeof data.text === 'string') return data.text
+  if (data && data.ok === false && PROXY_ERROR_MAP[data.code]) throw PROXY_ERROR_MAP[data.code](data.message)
+  // The endpoint is missing/misconfigured (e.g. `vite dev` without Functions returns index.html or 404).
+  throw classifyStatus(response.status || 0, 'The shared AI service is not available. Add your own API key in Settings.')
+}
+
 /* ---------------------------------- Router ---------------------------------- */
 
 export async function callModelText(args: CallArgs): Promise<string> {
+  if (args.proxy) return callProxy(args)
   if (args.type === 'gemini') return callGemini(args)
   return callOpenAICompatible(args)
 }

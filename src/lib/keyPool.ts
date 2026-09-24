@@ -81,11 +81,34 @@ function persistHealth(fp: string, state: KeyHealth[string]) {
   } catch { /* non fatal */ }
 }
 
-/** Run one call with automatic key rotation + bounded retries according to the error matrix. */
+/**
+ * Run one call with retries according to the error matrix.
+ *
+ * - source 'user' (BYOK): rotate through the user's own keys, benching dead/limited ones.
+ * - source 'admin' (shared tier): there are NO browser keys. Rotation happens server-side, so `fn`
+ *   is invoked with an empty key and the call is routed through the proxy by the caller.
+ */
 export async function withKeyRotation<T>(model: ModelRef, fn: (apiKey: string) => Promise<T>): Promise<T> {
-  const pool = new KeyPool(model)
   const maxAttempts = 4
   let lastError: AIError | null = null
+
+  if (model.source === 'admin') {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        return await fn('')
+      } catch (e) {
+        const err = toAIError(e)
+        lastError = err
+        if (!err.retryable) throw err
+        // The server already rotated across its keys; back off longer than for BYOK.
+        const backoff = err.code === 'RATE_LIMITED' ? Math.min(15_000, 3000 * 2 ** attempt) : 1500
+        await new Promise((r) => setTimeout(r, backoff))
+      }
+    }
+    throw lastError ?? new AIError('UNKNOWN', 'errors.unknown')
+  }
+
+  const pool = new KeyPool(model)
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let fp: string
     try {

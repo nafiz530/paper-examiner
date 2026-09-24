@@ -78,6 +78,11 @@ export function extractJson(text: string): Record<string, unknown> {
 
 /* --------------------------------- AI helper --------------------------------- */
 
+/** Shared-tier models are called through our own proxy; BYOK models go straight to the provider. */
+export function proxyTarget(model: ModelRef): { providerId: string } | undefined {
+  return model.source === 'admin' ? { providerId: model.providerId } : undefined
+}
+
 async function callJSON(
   model: ModelRef,
   opts: { system: string; user: string; images: ImagePart[]; schema: Record<string, unknown>; schemaName: string; maxTokens: number },
@@ -87,6 +92,7 @@ async function callJSON(
     baseURL: model.baseURL,
     model: model.model,
     apiKey,
+    proxy: proxyTarget(model),
     system: opts.system,
     user: opts.user,
     images: opts.images,
@@ -100,6 +106,7 @@ async function callJSON(
     // one repair attempt with a stricter reminder
     const retry = await withKeyRotation(model, (apiKey) => callModelText({
       type: model.type, baseURL: model.baseURL, model: model.model, apiKey,
+      proxy: proxyTarget(model),
       system: opts.system,
       user: `${opts.user}\n\nIMPORTANT: Your previous reply was not valid JSON. Reply with ONLY one valid JSON object matching the schema. No markdown, no commentary.`,
       images: opts.images,

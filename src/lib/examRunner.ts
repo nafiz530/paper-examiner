@@ -8,7 +8,7 @@ import { AIError } from './aiErrors'
 import type { ProgressEvent } from './pipeline'
 import type { ImagePart } from './providers'
 
-/** Daily usage cap for admin-provided keys (client-side, by design). */
+/** Friendly client-side daily cap for the shared tier. The REAL limit is enforced server-side (per-IP rate limit). */
 export function checkUsageCap(selection: Selection): boolean {
   const usesAdminKeys = selection.mode === 'single' ? selection.single?.source === 'admin' : selection.agent.some((m) => m.source === 'admin')
   if (!usesAdminKeys) return true
@@ -23,8 +23,9 @@ export function recordRun(selection: Selection) {
   if (!usesAdminKeys) return
   const s = loadSettings()
   const today = new Date().toISOString().slice(0, 10)
-  s.lastRunDate = today
+  // (previous version assigned lastRunDate BEFORE comparing it, so the counter was always reset to 1)
   s.runsToday = s.lastRunDate === today ? s.runsToday + 1 : 1
+  s.lastRunDate = today
   saveSettings(s)
 }
 

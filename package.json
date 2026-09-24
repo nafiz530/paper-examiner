@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck:functions": "tsc -p functions/tsconfig.json",
+    "test:proxy": "npx --yes tsx functions/_test/proxy.test.ts"
   },
   "dependencies": {
     "@google/genai": "^1.30.0",
